@@ -33,6 +33,11 @@ const getTooltipStylesByType = (theme: Theme, type: TooltipColorTypes): CSSObjec
     color: theme.palette.texts.info,
     borderRadius: '4px',
     backgroundColor: theme.palette.background.default,
+    // Deliberately NO width cap on this branch. It is the DEFAULT type, and SearchHighlights (640px), the
+    // DataEntityDetailsPreview card (400-800px) and the relationship-key tooltip (430px) hand it elements that
+    // carry their own width; a popper-level `maxWidth` clamps the card and lets the content paint outside it
+    // (measured 2026-09-08 when a 360px cap was tried here: 280px of overflow on every search-result highlight).
+    // The wrap width for plain-string help lives on `TooltipBody`, which `AppTooltip` applies to those itself.
   };
 };
 
@@ -60,10 +65,13 @@ export const ChildrenContainer = styled(Box)<{ $isOverflowed: boolean }>(
   })
 );
 
-// The shared styled body for an informational AppTooltip. The "light" popper supplies only a flat
-// `background.default` with `padding: 0` and `maxWidth: 'unset'`, so the CONTENT must bring its own padding, a
-// max width (so it wraps), and the border / radius / shadow that make it read as a card. Passing a bare string
-// instead renders one unwrapped, edge-to-edge, background-less row of text - the defect LSN-035 caught.
+// The shared styled body for an informational AppTooltip: padding, a wrap width, and the border / radius /
+// shadow that make it read as a card. The "light" popper supplies only a flat `background.default` with
+// `padding: 0` and `maxWidth: 'unset'` — deliberately, see getTooltipStylesByType — so the CONTENT brings the
+// padding, the wrap width and the card treatment. `AppTooltip` wraps a plain-string title in this body itself for
+// light informational tooltips (`checkForOverflow={false}`), so a call site cannot reintroduce the bare
+// edge-to-edge row (LSN-035, and its 2026-09 repeat on the Last-viewed facet) by omission; an element title is
+// the caller's own body and passes through with the width it declared.
 // Lives here (next to the tooltip it styles) rather than inside one feature's style sheet, so every inline
 // "(i)" help affordance on the platform shares one body instead of copying it (ADR-0076).
 export const TooltipBody = styled('div')(({ theme }) => ({
