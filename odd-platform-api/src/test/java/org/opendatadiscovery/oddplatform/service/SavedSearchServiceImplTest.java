@@ -234,6 +234,72 @@ class SavedSearchServiceImplTest {
     }
 
     /**
+     * ST-10 (#1844): a stored recency scope is read back exactly as the search would apply it — with ONE deliberate
+     * difference from the popularity rule above. An INVERTED window drops both BOUNDS and KEEPS the scope ("any
+     * time"), because a stored spec came from a client that did intend a recency scope and "every asset in my
+     * history" is the search it can still run; a live inverted window, by contrast, answers an empty page. The
+     * front-end projection mirrors this exact rule, so the two surfaces can never disagree about a stored window.
+     *
+     * <p>Note also that an EMPTY scope object survives as a real scope, where an empty popularity range means no
+     * range at all: presence is the switch here.
+     */
+    @Test
+    void list_storedRecencyScope_isNormalisedFieldLevel_andAnInvertedWindowKeepsTheScope() {
+        identity();
+        final String inverted = "{\"query\":\"r1\",\"recently_viewed\":"
+            + "{\"viewed_after\":\"2026-09-30T00:00:00Z\",\"viewed_before\":\"2026-09-01T00:00:00Z\"},"
+            + "\"filters\":{}}";
+        final String notAnObject = "{\"query\":\"r2\",\"recently_viewed\":\"last week\",\"filters\":{}}";
+        final String badBound = "{\"query\":\"r3\",\"recently_viewed\":"
+            + "{\"viewed_after\":\"not-a-date\",\"viewed_before\":\"2026-09-30T00:00:00Z\"},\"filters\":{}}";
+        final String anyTime = "{\"query\":\"r4\",\"recently_viewed\":{},\"filters\":{}}";
+        // The shape a REAL saved search actually stores: the serialiser writes the unset bounds as explicit JSON
+        // nulls rather than omitting them, so `{"viewed_after": null, "viewed_before": null}` is what comes back
+        // off the wire for "any time" (observed on a running stack in the IT-157 saved-search case, where an
+        // oracle expecting a literal `{}` failed against it). It must read as the SAME state as `{}` above:
+        // present, bounds-free. Without this the null-bound branch is the one production takes and no test does.
+        final String explicitNulls = "{\"query\":\"r5\",\"recently_viewed\":"
+            + "{\"viewed_after\":null,\"viewed_before\":null},\"filters\":{}}";
+        when(repository.list("alice", "google", 0, 30)).thenReturn(Flux.just(
+            pojo(21L, "inverted", inverted), pojo(22L, "not-an-object", notAnObject),
+            pojo(23L, "bad-bound", badBound), pojo(24L, "any-time", anyTime),
+            pojo(25L, "explicit-nulls", explicitNulls)));
+        when(repository.count("alice", "google")).thenReturn(Mono.just(5L));
+
+        StepVerifier.create(service.list(1, 30))
+            .assertNext(list -> {
+                final var invertedSpec = list.getItems().get(0).getSpec().getRecentlyViewed();
+                assertThat(invertedSpec)
+                    .as("inverted → the SCOPE survives (unlike popularity, which drops entirely)")
+                    .isNotNull();
+                assertThat(invertedSpec.getViewedAfter()).as("both bounds dropped").isNull();
+                assertThat(invertedSpec.getViewedBefore()).isNull();
+                assertThat(list.getItems().get(0).getSpec().getQuery()).isEqualTo("r1");
+
+                assertThat(list.getItems().get(1).getSpec().getRecentlyViewed())
+                    .as("not an object → absent").isNull();
+
+                final var badBoundSpec = list.getItems().get(2).getSpec().getRecentlyViewed();
+                assertThat(badBoundSpec).as("the bad bound is dropped, the good one kept").isNotNull();
+                assertThat(badBoundSpec.getViewedAfter()).isNull();
+                assertThat(badBoundSpec.getViewedBefore()).isNotNull();
+
+                assertThat(list.getItems().get(3).getSpec().getRecentlyViewed())
+                    .as("an empty scope is a REAL stored state — 'any time' — and must not collapse to absent")
+                    .isNotNull();
+
+                final var nullsSpec = list.getItems().get(4).getSpec().getRecentlyViewed();
+                assertThat(nullsSpec)
+                    .as("explicit JSON nulls are the SHIPPED wire shape of 'any time' — present, not absent")
+                    .isNotNull();
+                assertThat(nullsSpec.getViewedAfter()).isNull();
+                assertThat(nullsSpec.getViewedBefore()).isNull();
+                assertThat(list.getItems().get(4).getSpec().getQuery()).isEqualTo("r5");
+            })
+            .verifyComplete();
+    }
+
+    /**
      * A stored spec that parses but is not a JSON object (an array, a scalar) has no fields to sanitise or bind:
      * it degrades to the empty spec like unreadable text does — never a 500, never a throw in the list path.
      */

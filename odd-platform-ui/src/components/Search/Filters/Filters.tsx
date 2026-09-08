@@ -17,6 +17,7 @@ import { searchPath } from 'routes';
 import { paramsToSearchState, searchStateToParams } from 'lib/search/searchUrlState';
 import AssetTypeFilter from './AssetTypeFilter/AssetTypeFilter';
 import FavoritesFilter from './FavoritesFilter/FavoritesFilter';
+import RecentlyViewedFilter from './RecentlyViewedFilter/RecentlyViewedFilter';
 import MyDataFilter from './MyDataFilter/MyDataFilter';
 import DataEntityTypeFilter from './DataEntityTypeFilter/DataEntityTypeFilter';
 import PopularityFilter from './PopularityFilter/PopularityFilter';
@@ -32,15 +33,23 @@ const Filters: React.FC = () => {
 
   // The single "Clear All": clear the redux facets (Datasource / Type / Owner / Tag / Groups / Statuses AND
   // the entity-class Data-entity-type filter) AND the URL-only filters that are not redux facets —
-  // `asset_kinds`, since ST-8 (#1842) the My-data scope + its per-direction depths, the Favorites scope, and
-  // since ST-9 (#1843) the Popularity range (none of them survive the rebuild below). Query and sort are
-  // preserved because they are not filters; the My-data scope IS one (it sits in this very panel), so unlike
-  // the old My-Objects tab it is cleared. One navigate to the clean URL avoids a mirror race with the redux
-  // clear.
+  // `asset_kinds`, since ST-8 (#1842) the My-data scope + its per-direction depths, the Favorites scope,
+  // since ST-9 (#1843) the Popularity range, and since ST-10 (#1844) the Last-viewed scope (none of them
+  // survive the rebuild below). Query and sort are preserved because they are not filters; the My-data scope IS
+  // one (it sits in this very panel), so unlike the old My-Objects tab it is cleared. One navigate to the clean
+  // URL avoids a mirror race with the redux clear.
+  //
+  // ST-10 — `sort` is preserved with ONE exception: `last_viewed` is meaningless once the recency scope is gone
+  // (the server drops the token without it), so clearing the scope must clear that ordering with it. Leaving it
+  // would put a sort in the URL that the list does not have and the menu will not offer.
   const handleClearAll = React.useCallback(() => {
     dispatch(clearDataEntitySearchFacets());
     const { query, sort } = paramsToSearchState(location.search);
-    const params = searchStateToParams({ query, facets: {}, sort });
+    const params = searchStateToParams({
+      query,
+      facets: {},
+      sort: sort === 'last_viewed' ? undefined : sort,
+    });
     navigate(`${searchPath()}${params ? `?${params}` : ''}`);
   }, [dispatch, navigate, location.search]);
 
@@ -76,6 +85,10 @@ const Filters: React.FC = () => {
             says), whereas a My-data scope has no owner to resolve. It is also the only in-app route to
             "everything I starred" now that the /favorites tab is retired. */}
         <FavoritesFilter />
+        {/* ST-10 (#1844) — the Last-viewed scope, the third personal narrowing, so it sits with the other two
+            rather than with the global facets below. Unlike My data it renders under auth.type=DISABLED (there is
+            a shared history to scope, and the home panel already shows it); unlike Popularity it is cross-kind. */}
+        <RecentlyViewedFilter />
         <SingleFilterItem
           key='ds'
           facetName='datasources'
